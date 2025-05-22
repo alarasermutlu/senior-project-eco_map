@@ -7,7 +7,7 @@ def generate_graph(start_lat, start_lon, network_type="drive"):
     """
     Downloads a street network graph based on the starting latitude and longitude.
     """
-    return ox.graph_from_point((start_lat, start_lon), dist=5000, network_type=network_type)
+    return ox.graph_from_point((start_lat, start_lon), dist=10000, network_type=network_type)
 
 def calculate_slope(G):
     """

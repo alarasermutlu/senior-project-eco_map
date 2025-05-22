@@ -38,7 +38,7 @@ async def get_elevations_batch(coords):
     return [0] * len(coords)
 
 # --- MAIN LOGIC ---
-def main(start_lat, start_lon, end_lat, end_lon, vehicle_params):
+async def main(start_lat, start_lon, end_lat, end_lon, vehicle_params):
     logging.info("Downloading map...")
     G = generate_graph(start_lat, start_lon, NETWORK_TYPE)
     logging.info("Map downloaded.")
@@ -51,8 +51,8 @@ def main(start_lat, start_lon, end_lat, end_lon, vehicle_params):
     elevations = []
     for i in range(0, len(coords), batch_size):
         batch = coords[i:i + batch_size]
-        elevations.extend(asyncio.run(get_elevations_batch(batch)))
-        time.sleep(1)
+        elevations.extend(await get_elevations_batch(batch))
+        await asyncio.sleep(1)
 
     # Assign elevation to nodes
     for idx, (node, data) in enumerate(node_list):
@@ -69,12 +69,20 @@ def main(start_lat, start_lon, end_lat, end_lon, vehicle_params):
     logging.info("Calculating eco-friendly route...")
     shortest_route, eco_route = find_shortest_and_eco_route(G, orig_node, dest_node, vehicle_params)
 
+    if len(shortest_route) < 2:
+        logging.error("Shortest route has fewer than 2 nodes; no valid path found.")
+        raise ValueError("Shortest route invalid")
+
+    if len(eco_route) < 2:
+        logging.error("Eco route has fewer than 2 nodes; no valid path found.")
+        raise ValueError("Eco route invalid")
+
     # Create 3D route output
-    route_coords = [
-        (G.nodes[n]['y'], G.nodes[n]['x'], G.nodes[n]['elevation']) for n in eco_route
-    ]
+    shortest_coords = [(G.nodes[n]['y'], G.nodes[n]['x']) for n in shortest_route]
+    eco_coords = [(G.nodes[n]['y'], G.nodes[n]['x'], G.nodes[n].get('elevation', 0)) for n in eco_route]
+
     logging.info("3D Route coordinates:")
-    for pt in route_coords:
+    for pt in eco_coords:
         logging.info(pt)
 
     # Plot both routes
@@ -103,11 +111,13 @@ def main(start_lat, start_lon, end_lat, end_lon, vehicle_params):
     try:
         with open("route3d.csv", "w") as f:
             f.write("lat,lon,elevation\n")
-            for pt in route_coords:
+            for pt in eco_coords:
                 f.write(f"{pt[0]},{pt[1]},{pt[2]}\n")
         logging.info("Route saved to route3d.csv")
     except Exception as e:
-        logging.error("Error saving route to file:", e)
+        logging.error("Error saving route to file: %s", e)
+
+    return shortest_coords, eco_coords
 
 if __name__ == "__main__":
     print("Enter your car details:")
@@ -129,4 +139,4 @@ if __name__ == "__main__":
     start_lon = 28.9850
     end_lat = 41.0086
     end_lon = 28.9802
-    main(start_lat, start_lon, end_lat, end_lon, vehicle_params)
+    asyncio.run(main(start_lat, start_lon, end_lat, end_lon, vehicle_params))
