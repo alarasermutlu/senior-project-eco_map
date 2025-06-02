@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Eco Route Map</title>
+    <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
+    <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet">
+    <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+    <style>
+        body { margin: 0; padding: 0; }
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+        .map-overlay {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: white;
+            padding: 10px;
+            border-radius: 4px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        #debug {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: white;
+            padding: 10px;
+            border-radius: 4px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            max-height: 200px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div class="map-overlay">
+        <h3>Route Options</h3>
+        <div>
+            <input type="checkbox" id="shortest" checked>
+            <label for="shortest">Shortest Route</label>
+        </div>
+        <div>
+            <input type="checkbox" id="eco" checked>
+            <label for="eco">Eco-Friendly Route</label>
+        </div>
+    </div>
+    <div id="debug"></div>
+
+    <script>
+        // Replace with your Mapbox access token
+        mapboxgl.accessToken = 'pk.eyJ1IjoiYWxhcmFzZXJtdXRsdSIsImEiOiJjbWJjamRsZjMxbndoMmxzOWl3ZWozMTRoIn0.3ZKrG6or5GUTKaNJnPGvMA';
+
+        const map = new mapboxgl.Map({
+            container: 'map',
+            style: 'mapbox://styles/mapbox/outdoors-v12',
+            center: [32.8610, 39.9237], // Ankara coordinates
+            zoom: 12,
+            pitch: 60, // Tilt the map for 3D effect
+            bearing: 0
+        });
+
+        function log(message) {
+            const debug = document.getElementById('debug');
+            debug.innerHTML += message + '<br>';
+            console.log(message);
+        }
+
+        // Load the routes when the map is ready
+        map.on('load', () => {
+    log('Map loaded');
+    
+    // Add 3D terrain
+    map.addSource('mapbox-dem', {
+        'type': 'raster-dem',
+        'url': 'mapbox://mapbox.mapbox-terrain-dem-v1',
+        'tileSize': 512,
+        'maxzoom': 14
+    });
+    map.setTerrain({ 'source': 'mapbox-dem', 'exaggeration': 1.5 });
+    log('Terrain added');
+
+    // Add 3D buildings when zoomed in
+    const layers = map.getStyle().layers;
+    const labelLayerId = layers.find(
+        (layer) => layer.type === 'symbol' && layer.layout && layer.layout['text-field']
+    )?.id;
+
+    map.addLayer(
+        {
+            'id': 'add-3d-buildings',
+            'source': 'composite',
+            'source-layer': 'building',
+            'filter': ['==', 'extrude', 'true'],
+            'type': 'fill-extrusion',
+            'minzoom': 15,
+            'paint': {
+                'fill-extrusion-color': '#aaa',
+                'fill-extrusion-height': [
+                    'interpolate',
+                    ['linear'],
+                    ['zoom'],
+                    15, 0,
+                    15.05, ['get', 'height']
+                ],
+                'fill-extrusion-base': [
+                    'interpolate',
+                    ['linear'],
+                    ['zoom'],
+                    15, 0,
+                    15.05, ['get', 'min_height']
+                ],
+                'fill-extrusion-opacity': 0.6
+            }
+        },
+        labelLayerId
+    );
+
+    // Load the route GeoJSON files
+    fetch('shortest_route.geojson')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            log('Shortest route data loaded');
+            map.addSource('shortest-route', {
+                'type': 'geojson',
+                'data': data
+            });
+            map.addLayer({
+                'id': 'shortest-route',
+                'type': 'line',
+                'source': 'shortest-route',
+                'layout': {
+                    'line-join': 'round',
+                    'line-cap': 'round',
+                    'visibility': 'visible'
+                },
+                'paint': {
+                    'line-color': '#0080ff',
+                    'line-width': 4,
+                    'line-opacity': 0.8
+                }
+            });
+            log('Shortest route layer added');
+        })
+        .catch(error => {
+            log('Error loading shortest route: ' + error);
+        });
+
+    fetch('eco_route.geojson')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            log('Eco route data loaded');
+            map.addSource('eco-route', {
+                'type': 'geojson',
+                'data': data
+            });
+            map.addLayer({
+                'id': 'eco-route',
+                'type': 'line',
+                'source': 'eco-route',
+                'layout': {
+                    'line-join': 'round',
+                    'line-cap': 'round',
+                    'visibility': 'visible'
+                },
+                'paint': {
+                    'line-color': '#00ff00',
+                    'line-width': 4,
+                    'line-opacity': 0.8
+                }
+            });
+            log('Eco route layer added');
+        })
+        .catch(error => {
+            log('Error loading eco route: ' + error);
+        });
+});
+
+        // Add controls to toggle routes
+        document.getElementById('shortest').addEventListener('change', (e) => {
+            const visibility = e.target.checked ? 'visible' : 'none';
+            map.setLayoutProperty('shortest-route', 'visibility', visibility);
+        });
+
+        document.getElementById('eco').addEventListener('change', (e) => {
+            const visibility = e.target.checked ? 'visible' : 'none';
+            map.setLayoutProperty('eco-route', 'visibility', visibility);
+        });
+    </script>
+</body>
+</html> 
