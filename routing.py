@@ -10,28 +10,52 @@ logger = logging.getLogger(__name__)
 
 # Vehicle type definitions with scientifically validated parameters
 VEHICLE_TYPES = {
-    'small': {
-        'weight': 1200,  # kg
-        'drag_coef': 0.32,  # Based on wind tunnel testing
-        'frontal_area': 2.0,  # m²
-        'base_efficiency': 0.35  # Based on EPA testing
+    'A': {  # City cars (e.g., Smart Fortwo, Fiat 500)
+        'weight': 1000,  # kg
+        'drag_coef': 0.30,  # Based on wind tunnel testing
+        'frontal_area': 1.8,  # m²
+        'base_efficiency': 0.38  # Based on EPA testing
     },
-    'medium': {
-        'weight': 1500,
+    'B': {  # Supermini (e.g., VW Polo, Ford Fiesta)
+        'weight': 1200,
+        'drag_coef': 0.32,
+        'frontal_area': 2.0,
+        'base_efficiency': 0.35
+    },
+    'C': {  # Small family car (e.g., VW Golf, Toyota Corolla)
+        'weight': 1400,
         'drag_coef': 0.34,
         'frontal_area': 2.2,
         'base_efficiency': 0.33
     },
-    'large': {
-        'weight': 2000,
+    'D': {  # Large family car (e.g., VW Passat, Toyota Camry)
+        'weight': 1600,
         'drag_coef': 0.36,
-        'frontal_area': 2.5,
-        'base_efficiency': 0.30
+        'frontal_area': 2.4,
+        'base_efficiency': 0.31
     },
-    'suv': {
+    'E': {  # Executive car (e.g., BMW 5 Series, Mercedes E-Class)
         'weight': 1800,
+        'drag_coef': 0.38,
+        'frontal_area': 2.6,
+        'base_efficiency': 0.29
+    },
+    'F': {  # Luxury car (e.g., BMW 7 Series, Mercedes S-Class)
+        'weight': 2000,
         'drag_coef': 0.40,
         'frontal_area': 2.8,
+        'base_efficiency': 0.27
+    },
+    'S': {  # Sports car (e.g., Porsche 911, Ferrari)
+        'weight': 1500,
+        'drag_coef': 0.35,
+        'frontal_area': 2.3,
+        'base_efficiency': 0.30
+    },
+    'M': {  # Multi-purpose vehicle (e.g., VW Touran, Renault Scenic)
+        'weight': 1700,
+        'drag_coef': 0.39,
+        'frontal_area': 2.7,
         'base_efficiency': 0.28
     }
 }
@@ -578,52 +602,22 @@ def calculate_weather_impact(weather_conditions, road_type):
     }
 
 def calculate_vehicle_efficiency(speed, vehicle_params):
-    """
-    Calculate vehicle efficiency based on scientific research:
-    - EPA fuel economy testing procedures
-    - SAE J1349 standard for engine power and efficiency
-    - Real-world fuel consumption studies
-    """
-    # Base efficiency curves from EPA testing
-    if vehicle_params.get('fuel_type') == 'electric':
-        # Electric vehicle efficiency curve based on EPA testing
-        # Source: EPA's Electric Vehicle Testing Procedures
-        optimal_speed = 50  # km/h
-        max_efficiency = 0.85
-        speed_diff = abs(speed - optimal_speed)
-        efficiency = max_efficiency * math.exp(-0.0003 * (speed_diff ** 2))
-        
-        # Temperature impact based on battery research
-        if 'temperature' in vehicle_params:
-            temp = vehicle_params['temperature']
-            if temp < 10:
-                efficiency *= 0.85  # Cold weather impact
-            elif temp > 30:
-                efficiency *= 0.90  # Hot weather impact
-                
-    elif vehicle_params.get('fuel_type') == 'hybrid':
-        # Hybrid efficiency curve based on EPA testing
-        optimal_speed = 60  # km/h
-        max_efficiency = 0.45
-        speed_diff = abs(speed - optimal_speed)
-        efficiency = max_efficiency * math.exp(-0.0004 * (speed_diff ** 2))
-        
-        # Regenerative braking efficiency based on SAE research
-        if speed < 30:
-            efficiency *= 1.15  # Enhanced regenerative braking at low speeds
-            
-    else:
-        # Internal combustion engine efficiency curve
-        # Based on SAE J1349 standard and EPA testing
-        optimal_speed = 80  # km/h
-        max_efficiency = 0.35
-        speed_diff = abs(speed - optimal_speed)
-        efficiency = max_efficiency * math.exp(-0.0005 * (speed_diff ** 2))
-        
-        # Engine type adjustments based on SAE research
-        if vehicle_params.get('engine_type') == 'diesel':
-            efficiency *= 1.2  # Diesel efficiency advantage
-        elif vehicle_params.get('engine_type') == 'turbo':
-            efficiency *= 1.1  # Turbo efficiency advantage
+    """Calculate vehicle efficiency based on speed and vehicle parameters"""
+    # Get base efficiency from vehicle type
+    base_efficiency = vehicle_params.get('base_efficiency', 0.35)
     
-    return efficiency 
+    # Speed-based efficiency adjustment
+    # Most efficient speed is typically around 50-60 km/h
+    optimal_speed = 55  # km/h
+    speed_diff = abs(speed - optimal_speed)
+    speed_factor = 1.0 - (speed_diff / 100)  # Linear reduction in efficiency
+    
+    # Apply fuel type multiplier
+    fuel_type = vehicle_params.get('fuel_type', 'petrol')
+    fuel_multiplier = FUEL_EFFICIENCY.get(fuel_type, 1.0)
+    
+    # Calculate final efficiency
+    efficiency = base_efficiency * speed_factor * fuel_multiplier
+    
+    # Ensure efficiency stays within reasonable bounds
+    return max(0.2, min(0.8, efficiency)) 

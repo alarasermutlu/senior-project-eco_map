@@ -6,6 +6,7 @@ import json
 import requests
 import time
 from urllib.parse import urlencode
+from cache_manager import CacheManager
 
 from routing import (
     generate_graph,
@@ -22,6 +23,9 @@ logging.basicConfig(
 
 NETWORK_TYPE = "drive"
 MAPBOX_ACCESS_TOKEN = "pk.eyJ1IjoiYWxhcmFzZXJtdXRsdSIsImEiOiJjbWJjamRsZjMxbndoMmxzOWl3ZWozMTRoIn0.3ZKrG6or5GUTKaNJnPGvMA"
+
+# Initialize cache manager
+cache_manager = CacheManager()
 
 def save_routes_to_geojson(shortest_coords, eco_coords):
     """
@@ -73,6 +77,15 @@ def get_elevations(coords, batch_size=100):
     coords: list of (lat, lon) tuples
     returns: list of elevations (meters above sea level)
     """
+    # Try to get from cache first
+    cache_data = {
+        'coords': coords,
+        'batch_size': batch_size
+    }
+    cached_elevations = cache_manager.get_cached_data('elevations', cache_data)
+    if cached_elevations is not None:
+        return cached_elevations
+
     elevations = []
     total_coords = len(coords)
     
@@ -122,14 +135,69 @@ def get_elevations(coords, batch_size=100):
         # Pad with zeros if we got fewer elevations than coordinates
         elevations.extend([0] * (total_coords - len(elevations)))
     
+    # Save to cache
+    cache_manager.save_to_cache('elevations', cache_data, elevations)
+    
     logging.info(f"Retrieved elevations for {len(elevations)} coordinates")
     return elevations
 
-def main(start_lat, start_lon, end_lat, end_lon, vehicle_params):
+def download_city_map(city_name, country="Turkey"):
+    """
+    Download and cache the entire map for a city.
+    Returns the graph object.
+    """
+    cache_key = f"city_{city_name}_{country}"
+    cached_graph = cache_manager.get_cached_data('city_map', {'city': city_name, 'country': country})
+    
+    if cached_graph is not None:
+        logging.info(f"Retrieved {city_name} map from cache")
+        return ox.graph_from_gdfs(
+            ox.graph_to_gdfs(ox.graph_from_json(cached_graph))
+        )
+    
+    logging.info(f"Downloading map for {city_name}, {country}...")
+    try:
+        # Download the city's street network
+        G = ox.graph_from_place(f"{city_name}, {country}", network_type=NETWORK_TYPE)
+        
+        # Save to cache
+        cache_manager.save_to_cache('city_map', {'city': city_name, 'country': country}, ox.graph_to_json(G))
+        logging.info(f"Map downloaded and cached for {city_name} with {len(G.nodes)} nodes and {len(G.edges)} edges")
+        return G
+    except Exception as e:
+        logging.error(f"Error downloading city map: {str(e)}")
+        return None
+
+def main(start_lat, start_lon, end_lat, end_lon, vehicle_params, city_name=None):
     logging.info("Starting route calculation...")
-    logging.info("Downloading map...")
-    G = generate_graph(start_lat, start_lon, end_lat, end_lon, NETWORK_TYPE)
-    logging.info(f"Map downloaded with {len(G.nodes)} nodes and {len(G.edges)} edges.")
+    
+    if city_name:
+        # Use the city-wide map
+        G = download_city_map(city_name)
+        if G is None:
+            logging.error(f"Failed to get map for {city_name}")
+            return None, None
+    else:
+        # Use the original method for specific routes
+        map_cache_data = {
+            'start_lat': start_lat,
+            'start_lon': start_lon,
+            'end_lat': end_lat,
+            'end_lon': end_lon,
+            'network_type': NETWORK_TYPE
+        }
+        
+        cached_graph = cache_manager.get_cached_data('map', map_cache_data)
+        if cached_graph is not None:
+            logging.info("Retrieved map data from cache")
+            G = ox.graph_from_gdfs(
+                ox.graph_to_gdfs(ox.graph_from_json(cached_graph))
+            )
+        else:
+            logging.info("Downloading map...")
+            G = generate_graph(start_lat, start_lon, end_lat, end_lon, NETWORK_TYPE)
+            cache_manager.save_to_cache('map', map_cache_data, ox.graph_to_json(G))
+            logging.info(f"Map downloaded with {len(G.nodes)} nodes and {len(G.edges)} edges.")
 
     # Find nearest graph nodes
     logging.info("Finding nearest nodes to start and end points...")
