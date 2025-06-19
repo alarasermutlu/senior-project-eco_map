@@ -214,11 +214,10 @@ if __name__ == "__main__":
     )
     
     # Çankaya, Ankara coordinates
-    start_lat = 39.9230
-    start_lon = 32.8616
-    end_lat = 39.9094
-    end_lon = 32.7757
-    
+    start_lat = 39.8610
+    start_lon = 32.8118
+    end_lat = 39.8659
+    end_lon = 32.8335
     # Set up vehicle parameters with detailed options
     vehicle_params = get_vehicle_params(
         vehicle_type='C',  # Options: 'A', 'B', 'C', 'D', 'E', 'F', 'S', 'J', 'M'

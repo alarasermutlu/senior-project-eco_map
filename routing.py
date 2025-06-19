@@ -180,89 +180,88 @@ def generate_graph(start_lat, start_lon, end_lat, end_lon, network_type="drive")
         logger.error(f"Error generating graph: {str(e)}")
         raise
 
-def calculate_fuel_consumption(edge_data, vehicle_params):
-    """
-    Calculate fuel consumption in liters for a given edge using a more realistic model.
-    """
+def calculate_fuel_consumption(edge_data, vehicle_params, hour=None, weather_conditions='dry'):
     length = edge_data.get('length', 0)  # meters
     slope = edge_data.get('slope', 0)
-    speed = edge_data.get('speed_kph', 50)
     road_type = edge_data.get('highway', 'primary')
     if isinstance(road_type, list):
         road_type = road_type[0]
+    speed_limit = edge_data.get('speed_kph', 70)  # Use 70 as base if not present
+
+    # 1. Traffic flow: get actual speed
+    if hour is not None:
+        speed_kph = calculate_traffic_flow(speed_limit, road_type, hour)
+        if speed_kph < speed_limit:
+            speed_kph *= 0.8  # Simulate heavier congestion
+    else:
+        speed_kph = speed_limit
+    speed = speed_kph / 3.6  # m/s
+
+    # 2. Weather impact
+    weather_impact = calculate_weather_impact(weather_conditions, road_type)
+    speed *= weather_impact['speed_multiplier']
+    friction_multiplier = weather_impact['friction_multiplier']
+
+    # 3. Rolling resistance
+    F_roll = calculate_rolling_resistance(vehicle_params, road_type) * friction_multiplier
+
+    # 4. Air resistance
+    F_air = calculate_air_resistance(speed, vehicle_params)
+
+    # 5. Slope force
+    mass = vehicle_params.get('weight', 1500)
+    gravity = 9.81
+    F_slope = mass * gravity * slope * 2  # exaggerate slope effect for eco calculations
+
+    # 6. Total force
+    F_total = F_roll + F_air + F_slope
+
+    # 7. Work in Joules
+    work = F_total * length
 
     fuel_type = vehicle_params.get('fuel_type', 'petrol')
 
+    # 8. Vehicle efficiency
+    vehicle_eff = calculate_vehicle_efficiency(speed_kph, vehicle_params)
+
+    # 9. Apply road-type and slope bias for eco routing
+    eco_bias = {
+        'motorway': 0.9,      # Favor motorways
+        'primary': 1.0,
+        'secondary': 1.05,
+        'residential': 1.1,
+        'service': 1.15
+    }
+    bias_factor = eco_bias.get(road_type, 1.05)
+
+    slope_penalty_factor = 1.0 + min(abs(slope), 0.3)  # cap at 30% extra
+    final_multiplier = bias_factor * slope_penalty_factor
+
     if fuel_type == 'electric':
-        # Use kWh/100km for electric vehicles
-        base_kwh_per_100km = 17  # Typical real-world value
-        # Apply multipliers as before
-        if slope > 0.05:
-            slope_multiplier = 1.2
-        elif slope < -0.05:
-            slope_multiplier = 0.9
-        else:
-            slope_multiplier = 1.0
-
-        if speed < 30:
-            speed_multiplier = 1.2
-        elif speed > 110:
-            speed_multiplier = 1.15
-        else:
-            speed_multiplier = 1.0
-
-        road_efficiency = {
-            'motorway': 0.9, 'trunk': 0.95, 'primary': 1.0, 'secondary': 1.05,
-            'tertiary': 1.08, 'residential': 1.12, 'service': 1.15,
-            'unclassified': 1.10, 'unsealed': 1.20,
-        }
-        road_multiplier = road_efficiency.get(road_type, 1.0)
-
-        total_multiplier = slope_multiplier * speed_multiplier * road_multiplier
-        # Calculate energy in kWh for this edge
-        energy = (length / 1000) * (base_kwh_per_100km / 100) * total_multiplier
+        battery_efficiency = 0.85 * vehicle_eff
+        energy_kwh = work / (3_600_000 * battery_efficiency)
+        if not math.isfinite(energy_kwh) or energy_kwh < 0:
+            energy_kwh = 0
         edge_data['unit'] = 'kWh'
-        return energy
+        energy_kwh *= final_multiplier  # APPLY ECO MODIFIERS
+        return energy_kwh
     else:
-        # Use L/100km for combustion/hybrid vehicles
-        base_l_per_100km = {
-            'A': 4.5, 'B': 5.0, 'C': 6.5, 'D': 7.5, 'E': 8.0,
-            'F': 9.0, 'S': 8.5, 'J': 8.5, 'M': 7.5,
-        }.get(vehicle_params.get('vehicle_type', 'C'), 6.5)
-
+        engine_efficiency = 0.25 * vehicle_eff
+        fuel_energy_density = 34_200_000  # J/L
         fuel_multipliers = {
             'petrol': 1.0,
             'diesel': 0.85,
             'hybrid': 0.7,
             'plug-in_hybrid': 0.6,
+            'electric': 1.0
         }
         fuel_multiplier = fuel_multipliers.get(fuel_type, 1.0)
-
-        if slope > 0.05:
-            slope_multiplier = 1.2
-        elif slope < -0.05:
-            slope_multiplier = 0.9
-        else:
-            slope_multiplier = 1.0
-
-        if speed < 30:
-            speed_multiplier = 1.2
-        elif speed > 110:
-            speed_multiplier = 1.15
-        else:
-            speed_multiplier = 1.0
-
-        road_efficiency = {
-            'motorway': 0.9, 'trunk': 0.95, 'primary': 1.0, 'secondary': 1.05,
-            'tertiary': 1.08, 'residential': 1.12, 'service': 1.15,
-            'unclassified': 1.10, 'unsealed': 1.20,
-        }
-        road_multiplier = road_efficiency.get(road_type, 1.0)
-
-        total_multiplier = fuel_multiplier * slope_multiplier * speed_multiplier * road_multiplier
-        fuel = (length / 1000) * (base_l_per_100km / 100) * total_multiplier
+        fuel_used = (work / (fuel_energy_density * engine_efficiency)) * fuel_multiplier
+        if not math.isfinite(fuel_used) or fuel_used < 0:
+            fuel_used = 0
         edge_data['unit'] = 'L'
-        return fuel
+        fuel_used *= final_multiplier  # APPLY ECO MODIFIERS
+        return fuel_used
 
 def get_vehicle_params(vehicle_type, fuel_type, year):
     """Get vehicle parameters based on type and fuel"""
@@ -508,41 +507,6 @@ def calculate_wind_resistance(speed, wind_speed, wind_direction, vehicle_params)
     
     return 0.5 * air_density * (effective_speed ** 2) * drag_coefficient * frontal_area
 
-def calculate_electric_vehicle_efficiency(speed, vehicle_params):
-    """Calculate efficiency for electric vehicles"""
-    # Electric vehicles are most efficient at moderate speeds
-    optimal_speed = vehicle_params.get('optimal_speed', 50)  # km/h
-    max_efficiency = vehicle_params.get('max_efficiency', 0.85)  # 85% efficiency
-    
-    # Efficiency curve for electric vehicles
-    speed_diff = abs(speed - optimal_speed)
-    efficiency = max_efficiency * math.exp(-0.0003 * (speed_diff ** 2))
-    
-    # Adjust for temperature (battery efficiency)
-    if 'temperature' in vehicle_params:
-        temp = vehicle_params['temperature']
-        if temp < 10:  # Cold weather reduces efficiency
-            efficiency *= 0.9
-        elif temp > 30:  # Hot weather also reduces efficiency
-            efficiency *= 0.95
-    
-    return efficiency
-
-def calculate_hybrid_efficiency(speed, vehicle_params):
-    """Calculate efficiency for hybrid vehicles"""
-    # Hybrid vehicles have different efficiency characteristics
-    optimal_speed = vehicle_params.get('optimal_speed', 60)  # km/h
-    max_efficiency = vehicle_params.get('max_efficiency', 0.45)  # 45% efficiency
-    
-    # Efficiency curve for hybrid vehicles
-    speed_diff = abs(speed - optimal_speed)
-    efficiency = max_efficiency * math.exp(-0.0004 * (speed_diff ** 2))
-    
-    # Regenerative braking bonus
-    if speed < 30:  # More regenerative braking at lower speeds
-        efficiency *= 1.1
-    
-    return efficiency
 
 def calculate_traffic_flow(speed_limit, road_type, hour):
     """
