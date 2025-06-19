@@ -163,11 +163,11 @@ def main(start_lat, start_lon, end_lat, end_lon, vehicle_params):
 
     # Get routes
     logging.info("Calculating eco-friendly route...")
-    shortest_route, eco_route = find_shortest_and_eco_route(G, orig_node, dest_node, vehicle_params)
-
-    if shortest_route is None or eco_route is None:
+    result = find_shortest_and_eco_route(G, orig_node, dest_node, vehicle_params)
+    if result is None or result[0] is None or result[1] is None:
         logging.error("No valid route found")
         return None, None
+    shortest_route, eco_route, shortest_cost, eco_cost, money_saved = result
 
     # Create route coordinates
     logging.info("Creating route coordinates...")
@@ -201,6 +201,9 @@ def main(start_lat, start_lon, end_lat, end_lon, vehicle_params):
     fig.savefig("route3d.png", dpi=150)
     logging.info("Routes plotted and saved as route3d.png")
 
+    # Log or print money saved
+    logging.info(f"Money saved by eco route: {money_saved:.2f}")
+
     return shortest_coords, eco_coords
 
 if __name__ == "__main__":
@@ -211,15 +214,15 @@ if __name__ == "__main__":
     )
     
     # Çankaya, Ankara coordinates
-    start_lat = 39.8897
-    start_lon = 32.7960
-    end_lat = 39.9161
-    end_lon = 32.8266
+    start_lat = 39.9230
+    start_lon = 32.8616
+    end_lat = 39.9094
+    end_lon = 32.7757
     
-    # Set up vehicle parameters with simplified options
+    # Set up vehicle parameters with detailed options
     vehicle_params = get_vehicle_params(
-        vehicle_type='medium',  # Options: 'small', 'medium', 'large', 'suv'
-        fuel_type='petrol',     # Options: 'petrol', 'diesel', 'hybrid', 'electric'
+        vehicle_type='C',  # Options: 'A', 'B', 'C', 'D', 'E', 'F', 'S', 'J', 'M'
+        fuel_type='petrol',     # Options: 'petrol', 'diesel', 'hybrid', 'electric', 'plug-in_hybrid'
         year=2020
     )
     

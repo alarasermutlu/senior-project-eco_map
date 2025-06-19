@@ -10,30 +10,69 @@ logger = logging.getLogger(__name__)
 
 # Vehicle type definitions with scientifically validated parameters
 VEHICLE_TYPES = {
-    'small': {
-        'weight': 1200,  # kg
-        'drag_coef': 0.32,  # Based on wind tunnel testing
-        'frontal_area': 2.0,  # m²
-        'base_efficiency': 0.35  # Based on EPA testing
+    'A': {  # Mini cars (e.g., Fiat 500, Smart Fortwo)
+        'weight': 900,  # kg
+        'drag_coef': 0.30,  # Based on wind tunnel testing
+        'frontal_area': 1.8,  # m²
+        'base_efficiency': 0.38  # Based on WLTP testing
     },
-    'medium': {
+    'B': {  # Small cars (e.g., VW Polo, Renault Clio)
+        'weight': 1100,
+        'drag_coef': 0.31,
+        'frontal_area': 1.9,
+        'base_efficiency': 0.36
+    },
+    'C': {  # Medium cars (e.g., VW Golf, Ford Focus)
+        'weight': 1300,
+        'drag_coef': 0.32,
+        'frontal_area': 2.1,
+        'base_efficiency': 0.34
+    },
+    'D': {  # Large cars (e.g., VW Passat, BMW 3 Series)
         'weight': 1500,
-        'drag_coef': 0.34,
-        'frontal_area': 2.2,
-        'base_efficiency': 0.33
+        'drag_coef': 0.33,
+        'frontal_area': 2.3,
+        'base_efficiency': 0.32
     },
-    'large': {
-        'weight': 2000,
-        'drag_coef': 0.36,
-        'frontal_area': 2.5,
+    'E': {  # Executive cars (e.g., BMW 5 Series, Mercedes E-Class)
+        'weight': 1700,
+        'drag_coef': 0.34,
+        'frontal_area': 2.4,
         'base_efficiency': 0.30
     },
-    'suv': {
-        'weight': 1800,
-        'drag_coef': 0.40,
-        'frontal_area': 2.8,
+    'F': {  # Luxury cars (e.g., BMW 7 Series, Mercedes S-Class)
+        'weight': 1900,
+        'drag_coef': 0.35,
+        'frontal_area': 2.5,
         'base_efficiency': 0.28
+    },
+    'S': {  # Sports cars (e.g., Porsche 911, Audi TT)
+        'weight': 1600,
+        'drag_coef': 0.36,
+        'frontal_area': 2.2,
+        'base_efficiency': 0.29
+    },
+    'J': {  # SUVs (e.g., VW Tiguan, BMW X3)
+        'weight': 1800,
+        'drag_coef': 0.38,
+        'frontal_area': 2.7,
+        'base_efficiency': 0.27
+    },
+    'M': {  # Multi-purpose vehicles (e.g., VW Touran, Renault Scenic)
+        'weight': 1600,
+        'drag_coef': 0.34,
+        'frontal_area': 2.4,
+        'base_efficiency': 0.31
     }
+}
+
+# Fuel prices per unit (TRY per liter or kWh)
+FUEL_PRICES = {
+    'petrol': 50.64,      # TRY per liter (example)
+    'diesel': 52.22,      # TRY per liter
+    'hybrid': 50.64,      # Assume petrol price for hybrid
+    'plug-in_hybrid': 50.64, # Assume petrol price for plug-in hybrid
+    'electric': 8.99      # TRY per kWh (example)
 }
 
 # Fuel efficiency multipliers based on EPA testing
@@ -66,6 +105,15 @@ TRAFFIC_PATTERNS = {
     }
 }
 
+# Add this near the top, after FUEL_PRICES
+FUEL_PRICES_PER_KM = {
+    'petrol': FUEL_PRICES['petrol'] / 13,      # Example: 13 km/L for petrol
+    'diesel': FUEL_PRICES['diesel'] / 17,      # Example: 17 km/L for diesel
+    'hybrid': FUEL_PRICES['hybrid'] / 20,      # Example: 20 km/L for hybrid
+    'plug-in_hybrid': FUEL_PRICES['plug-in_hybrid'] / 25, # Example: 25 km/L for plug-in hybrid
+    'electric': FUEL_PRICES['electric'] / 6    # Example: 6 km/kWh for electric
+}
+
 def get_traffic_multiplier(hour, road_type):
     """Get speed multiplier based on FHWA traffic patterns"""
     if road_type not in TRAFFIC_PATTERNS:
@@ -87,7 +135,7 @@ def generate_graph(start_lat, start_lon, end_lat, end_lon, network_type="drive")
     try:
         center_lat = float((start_lat + end_lat) / 2)
         center_lon = float((start_lon + end_lon) / 2)
-        distance = ox.distance.great_circle(start_lat, start_lon, end_lat, end_lon)
+        distance = ox.distance.great_circle_vec(start_lat, start_lon, end_lat, end_lon).item()
         radius = max(1500, distance * 1.5)
         
         logger.debug(f"Generating graph centered at ({center_lat}, {center_lon}) with radius {radius}m")
@@ -133,108 +181,98 @@ def generate_graph(start_lat, start_lon, end_lat, end_lon, network_type="drive")
         raise
 
 def calculate_fuel_consumption(edge_data, vehicle_params):
-    """Calculate fuel consumption using scientific models"""
-    # Get basic parameters
+    """
+    Calculate fuel consumption in liters for a given edge using a more realistic model.
+    """
     length = edge_data.get('length', 0)  # meters
-    speed_limit = edge_data.get('speed_kph', 50)  # km/h
-    slope = edge_data.get('slope', 0)  # degrees
+    slope = edge_data.get('slope', 0)
+    speed = edge_data.get('speed_kph', 50)
     road_type = edge_data.get('highway', 'primary')
-    # If road_type is a list, use the first element
     if isinstance(road_type, list):
         road_type = road_type[0]
-    
-    logger.debug(f"Calculating fuel for edge: length={length}m, speed={speed_limit}km/h, slope={slope}°, road_type={road_type}")
-    
-    # Get current time and weather
-    current_hour = datetime.now().hour
-    weather_conditions = vehicle_params.get('weather_conditions', 'dry')
-    
-    # Calculate traffic flow using Greenshields model
-    effective_speed = calculate_traffic_flow(speed_limit, road_type, current_hour)
-    
-    # Calculate weather impact
-    weather_impact = calculate_weather_impact(weather_conditions, road_type)
-    effective_speed *= weather_impact['speed_multiplier']
-    
-    # Convert speed to m/s
-    speed_ms = effective_speed / 3.6
-    
-    # Calculate forces using scientific models
-    air_resistance = calculate_air_resistance(speed_ms, vehicle_params)
-    
-    # Add wind resistance if available
-    if 'wind_speed' in vehicle_params and 'wind_direction' in vehicle_params:
-        air_resistance += calculate_wind_resistance(
-            speed_ms,
-            vehicle_params['wind_speed'],
-            vehicle_params['wind_direction'],
-            vehicle_params
-        )
-    
-    # Calculate rolling resistance with weather impact
-    rolling_resistance = calculate_rolling_resistance(vehicle_params, road_type)
-    rolling_resistance *= weather_impact['friction_multiplier']
-    
-    # Calculate gravitational force
-    vehicle_weight = vehicle_params.get('weight', 1500)  # kg
-    gravity = 9.81  # m/s²
-    slope_rad = math.radians(slope)
-    slope_force = vehicle_weight * gravity * math.sin(slope_rad)
-    
-    # Total force required
-    total_force = air_resistance + rolling_resistance + slope_force
-    
-    # Calculate work done
-    work = total_force * length  # Joules
-    
-    # Calculate energy required considering engine efficiency
-    engine_efficiency = calculate_vehicle_efficiency(effective_speed, vehicle_params)
-    energy_required = work / engine_efficiency
-    
-    # Convert to fuel consumption (liters)
-    # Energy density values from scientific literature
-    fuel_energy_densities = {
-        'petrol': 46.4e6,  # Joules per liter
-        'diesel': 45.6e6,
-        'electric': 3600e6,  # Joules per kWh
-        'hybrid': 46.4e6  # Uses petrol
-    }
-    
+
     fuel_type = vehicle_params.get('fuel_type', 'petrol')
-    fuel_energy_density = fuel_energy_densities.get(fuel_type, 46.4e6)
-    fuel_consumption = energy_required / fuel_energy_density
-    
-    # Road type efficiency adjustment
-    road_efficiency = {
-        'motorway': 1.2,  # More efficient on highways
-        'primary': 1.1,   # Slightly more efficient on primary roads
-        'secondary': 1.05,
-        'residential': 0.9,  # Less efficient on residential roads
-        'tertiary': 1.0
-    }
-    fuel_consumption /= road_efficiency.get(road_type, 1.0)
-    
-    # Add penalty for frequent stops (residential roads)
-    if road_type == 'residential':
-        fuel_consumption *= 1.2  # 20% penalty for frequent stops
-    
-    logger.debug(f"Forces: air={air_resistance:.2f}N, rolling={rolling_resistance:.2f}N, slope={slope_force:.2f}N")
-    logger.debug(f"Work={work:.2f}J, efficiency={engine_efficiency:.2f}, fuel={fuel_consumption:.4f}L")
-    
-    return fuel_consumption
+
+    if fuel_type == 'electric':
+        # Use kWh/100km for electric vehicles
+        base_kwh_per_100km = 17  # Typical real-world value
+        # Apply multipliers as before
+        if slope > 0.05:
+            slope_multiplier = 1.2
+        elif slope < -0.05:
+            slope_multiplier = 0.9
+        else:
+            slope_multiplier = 1.0
+
+        if speed < 30:
+            speed_multiplier = 1.2
+        elif speed > 110:
+            speed_multiplier = 1.15
+        else:
+            speed_multiplier = 1.0
+
+        road_efficiency = {
+            'motorway': 0.9, 'trunk': 0.95, 'primary': 1.0, 'secondary': 1.05,
+            'tertiary': 1.08, 'residential': 1.12, 'service': 1.15,
+            'unclassified': 1.10, 'unsealed': 1.20,
+        }
+        road_multiplier = road_efficiency.get(road_type, 1.0)
+
+        total_multiplier = slope_multiplier * speed_multiplier * road_multiplier
+        # Calculate energy in kWh for this edge
+        energy = (length / 1000) * (base_kwh_per_100km / 100) * total_multiplier
+        edge_data['unit'] = 'kWh'
+        return energy
+    else:
+        # Use L/100km for combustion/hybrid vehicles
+        base_l_per_100km = {
+            'A': 4.5, 'B': 5.0, 'C': 6.5, 'D': 7.5, 'E': 8.0,
+            'F': 9.0, 'S': 8.5, 'J': 8.5, 'M': 7.5,
+        }.get(vehicle_params.get('vehicle_type', 'C'), 6.5)
+
+        fuel_multipliers = {
+            'petrol': 1.0,
+            'diesel': 0.85,
+            'hybrid': 0.7,
+            'plug-in_hybrid': 0.6,
+        }
+        fuel_multiplier = fuel_multipliers.get(fuel_type, 1.0)
+
+        if slope > 0.05:
+            slope_multiplier = 1.2
+        elif slope < -0.05:
+            slope_multiplier = 0.9
+        else:
+            slope_multiplier = 1.0
+
+        if speed < 30:
+            speed_multiplier = 1.2
+        elif speed > 110:
+            speed_multiplier = 1.15
+        else:
+            speed_multiplier = 1.0
+
+        road_efficiency = {
+            'motorway': 0.9, 'trunk': 0.95, 'primary': 1.0, 'secondary': 1.05,
+            'tertiary': 1.08, 'residential': 1.12, 'service': 1.15,
+            'unclassified': 1.10, 'unsealed': 1.20,
+        }
+        road_multiplier = road_efficiency.get(road_type, 1.0)
+
+        total_multiplier = fuel_multiplier * slope_multiplier * speed_multiplier * road_multiplier
+        fuel = (length / 1000) * (base_l_per_100km / 100) * total_multiplier
+        edge_data['unit'] = 'L'
+        return fuel
 
 def get_vehicle_params(vehicle_type, fuel_type, year):
     """Get vehicle parameters based on type and fuel"""
     try:
         if vehicle_type not in VEHICLE_TYPES:
-            vehicle_type = 'medium'
-            
-        params = {
-            'vehicle_type': vehicle_type,
-            'fuel_type': fuel_type.lower(),
-            'year': year
-        }
-        
+            vehicle_type = 'C'  # Default to medium (C) if not found
+        params = VEHICLE_TYPES[vehicle_type].copy()
+        params['vehicle_type'] = vehicle_type
+        params['fuel_type'] = fuel_type.lower()
+        params['year'] = year
         # Adjust efficiency for vehicle age
         age = datetime.now().year - year
         if age > 10:
@@ -243,13 +281,11 @@ def get_vehicle_params(vehicle_type, fuel_type, year):
             params['age_factor'] = 1.05
         else:
             params['age_factor'] = 1.0
-            
         return params
-        
     except Exception as e:
         logger.error(f"Error generating vehicle parameters: {str(e)}")
         return {
-            'vehicle_type': 'medium',
+            'vehicle_type': 'C',
             'fuel_type': 'petrol',
             'age_factor': 1.0
         }
@@ -284,7 +320,7 @@ def find_shortest_and_eco_route(G, start_node, end_node, vehicle_params):
             # - Vehicle characteristics
             data['eco_weight'] = calculate_fuel_consumption(data, vehicle_params)
             
-            logger.info(f"Edge {u}->{v}: length={data['shortest_weight']:.2f}m, fuel={data['eco_weight']:.4f}L")
+            logger.info(f"Edge {u}->{v}: length={data['shortest_weight']:.2f}m, fuel={data['eco_weight']:.4f}{data['unit']}")
         
         # Find shortest path (based on distance only)
         logger.info(f"Finding shortest path from {start_node} to {end_node}")
@@ -316,7 +352,7 @@ def find_shortest_and_eco_route(G, start_node, end_node, vehicle_params):
             for u, v in path_edges:
                 # Get the first edge data if multiple edges exist
                 edge_data = next(iter(G[u][v].values()))
-                logger.info(f"  {u}->{v}: length={edge_data['length']:.2f}m, fuel={edge_data['eco_weight']:.4f}L")
+                logger.info(f"  {u}->{v}: length={edge_data['length']:.2f}m, fuel={edge_data['eco_weight']:.4f}{edge_data['unit']}")
             
         except nx.NetworkXNoPath:
             logger.error(f"No eco path found from {start_node} to {end_node}")
@@ -326,27 +362,47 @@ def find_shortest_and_eco_route(G, start_node, end_node, vehicle_params):
         shortest_distance = 0
         shortest_fuel = 0
         for u, v in zip(shortest_path[:-1], shortest_path[1:]):
-            # Get the first edge data if multiple edges exist
-            edge_data = next(iter(G[u][v].values()))
+            # Find the edge with the minimum eco_weight (the one used by the pathfinder)
+            min_key = min(G[u][v], key=lambda k: G[u][v][k]['eco_weight'])
+            edge_data = G[u][v][min_key]
             shortest_distance += edge_data['length']
-            # Calculate fuel consumption for the shortest route
-            shortest_fuel += calculate_fuel_consumption(edge_data, vehicle_params)
-            logger.info(f"Shortest route edge {u}->{v}: length={edge_data['length']:.2f}m, fuel={shortest_fuel:.4f}L")
+            shortest_fuel += edge_data['eco_weight']
+            logger.info(f"Shortest route edge {u}->{v}: length={edge_data['length']:.2f}m, fuel={shortest_fuel:.4f}{edge_data['unit']}")
         
         # Calculate totals for eco route
         eco_distance = 0
         eco_fuel = 0
         for u, v in zip(eco_path[:-1], eco_path[1:]):
-            # Get the first edge data if multiple edges exist
-            edge_data = next(iter(G[u][v].values()))
+            min_key = min(G[u][v], key=lambda k: G[u][v][k]['eco_weight'])
+            edge_data = G[u][v][min_key]
             eco_distance += edge_data['length']
             eco_fuel += edge_data['eco_weight']
-            logger.info(f"Eco route edge {u}->{v}: length={edge_data['length']:.2f}m, fuel={edge_data['eco_weight']:.4f}L")
+            logger.info(f"Eco route edge {u}->{v}: length={edge_data['length']:.2f}m, fuel={edge_data['eco_weight']:.4f}{edge_data['unit']}")
         
-        logger.info(f"Shortest route total: {shortest_distance/1000:.1f}km, {shortest_fuel:.2f}L fuel")
-        logger.info(f"Eco route total: {eco_distance/1000:.1f}km, {eco_fuel:.2f}L fuel")
+        logger.info(f"Shortest route total: {shortest_distance/1000:.1f}km, {shortest_fuel:.2f}{edge_data['unit']} fuel")
+        print(f"Shortest route total: {shortest_distance/1000:.1f}km, {shortest_fuel:.2f}{edge_data['unit']} fuel")
         
-        return shortest_path, eco_path
+        price_per_unit = FUEL_PRICES.get(vehicle_params['fuel_type'], 0)
+        shortest_cost = shortest_fuel * price_per_unit
+        eco_cost = eco_fuel * price_per_unit
+        money_saved = shortest_cost - eco_cost
+        logger.info(f"Money saved by eco route: {money_saved:.2f}{price_per_unit and ' TRY' or ''}")
+        print(f"Money saved by eco route: {money_saved:.2f}{price_per_unit and ' TRY' or ''}")
+        # Print and log price per unit
+        fuel_type = vehicle_params['fuel_type']
+        unit_label = 'L' if fuel_type != 'electric' else 'kWh'
+        logger.info(f"{fuel_type.capitalize()}: {price_per_unit} TRY/{unit_label}")
+        print(f"{fuel_type.capitalize()}: {price_per_unit} TRY/{unit_label}")
+        
+        # Print and log money saved or if routes are the same
+        if abs(money_saved) < 1e-3:
+            logger.info("Eco and shortest routes are the same. No money saved.")
+            print("Eco and shortest routes are the same. No money saved.")
+        else:
+            logger.info(f"Money saved by eco route: {money_saved:.2f}{price_per_unit and ' TRY' or ''}")
+            print(f"Money saved by eco route: {money_saved:.2f}{price_per_unit and ' TRY' or ''}")
+        
+        return shortest_path, eco_path, shortest_cost, eco_cost, money_saved
         
     except Exception as e:
         logger.error(f"Error finding routes: {str(e)}")
@@ -373,7 +429,7 @@ def calculate_slope(G):
 def calculate_air_resistance(speed, vehicle_params):
     """Calculate air resistance force in Newtons"""
     air_density = 1.225  # kg/m³ at sea level
-    drag_coefficient = vehicle_params.get('drag_coefficient', 0.3)
+    drag_coefficient = vehicle_params.get('drag_coef', 0.3)
     frontal_area = vehicle_params.get('frontal_area', 2.2)  # m²
     
     # F = 0.5 * ρ * v² * Cd * A
@@ -442,7 +498,7 @@ def get_weather_impact(weather_conditions, road_type):
 def calculate_wind_resistance(speed, wind_speed, wind_direction, vehicle_params):
     """Calculate additional air resistance due to wind"""
     air_density = 1.225  # kg/m³ at sea level
-    drag_coefficient = vehicle_params.get('drag_coefficient', 0.3)
+    drag_coefficient = vehicle_params.get('drag_coef', 0.3)
     frontal_area = vehicle_params.get('frontal_area', 2.2)  # m²
     
     # Calculate effective wind speed based on direction
