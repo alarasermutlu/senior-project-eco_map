@@ -211,7 +211,7 @@ def calculate_fuel_consumption(edge_data, vehicle_params, hour=None, weather_con
     # 5. Slope force
     mass = vehicle_params.get('weight', 1500)
     gravity = 9.81
-    F_slope = mass * gravity * slope * 2  # exaggerate slope effect for eco calculations
+    F_slope = mass * gravity * slope
 
     # 6. Total force
     F_total = F_roll + F_air + F_slope
@@ -226,15 +226,14 @@ def calculate_fuel_consumption(edge_data, vehicle_params, hour=None, weather_con
 
     # 9. Apply road-type and slope bias for eco routing
     eco_bias = {
-        'motorway': 0.9,      # Favor motorways
+        'motorway': 0.98,
         'primary': 1.0,
-        'secondary': 1.05,
-        'residential': 1.1,
-        'service': 1.15
+        'secondary': 1.01,
+        'residential': 1.02,
+        'service': 1.03
     }
-    bias_factor = eco_bias.get(road_type, 1.05)
-
-    slope_penalty_factor = 1.0 + min(abs(slope), 0.3)  # cap at 30% extra
+    bias_factor = eco_bias.get(road_type, 1.01)
+    slope_penalty_factor = 1.0 + min(abs(slope), 0.05)  # cap at 5% extra
     final_multiplier = bias_factor * slope_penalty_factor
 
     if fuel_type == 'electric':
